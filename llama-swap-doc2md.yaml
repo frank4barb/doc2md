@@ -1,0 +1,103 @@
+# Voci per il config.yaml di llama-swap usate da doc2md.
+# Sostituisci /home/utente con la tua home e i percorsi di build e modelli con i tuoi.
+# llama-swap avvia ogni voce alla prima richiesta, la tiene accesa finche' arrivano richieste
+# e la spegne dopo "ttl" secondi di inattivita': nessuna risorsa occupata quando non serve.
+
+models:
+
+  # --- lettori (modelli visivi, llama.cpp) -------------------------------------------------
+  # Tutti e tre girano con una build di llama.cpp abbastanza recente per MiniCPM-OCR-Jev
+  # (b11928 o successiva). Qui: build HIP per GPU AMD; con Vulkan o CUDA cambia solo il percorso.
+
+  # PaddleOCR-VL 1.6 (0,9B): legge il testo delle regioni scansionate
+  "paddleocr-vl":
+    cmd: |
+      /home/utente/ai/llama.cpp-jev/build-hip/bin/llama-server
+      --port ${PORT}
+      -m /home/utente/ai/modelli/PaddlePaddle__PaddleOCR-VL-1.6-GGUF/PaddleOCR-VL-1.6-GGUF.gguf
+      --mmproj /home/utente/ai/modelli/PaddlePaddle__PaddleOCR-VL-1.6-GGUF/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
+      -ngl 99 -c 16384 -np 1 --jinja --temp 0
+    ttl: 600
+
+  # MiniCPM-OCR 1.0 (1,3B): tabelle (OTSL -> HTML) e formule (LaTeX)
+  "minicpm-ocr":
+    cmd: |
+      /home/utente/ai/llama.cpp-jev/build-hip/bin/llama-server
+      --port ${PORT}
+      -m /home/utente/ai/modelli/openbmb__MiniCPM-OCR-1.0-gguf/MiniCPM-OCR-1.0-Q8_0.gguf
+      --mmproj /home/utente/ai/modelli/openbmb__MiniCPM-OCR-1.0-gguf/mmproj-model-f16.gguf
+      -ngl 99 -c 40960 -np 1 --jinja --temp 0
+    ttl: 600
+
+  # MiniCPM-OCR-Jev (2B): giudice, voto 0-1 sulle trascrizioni (solo con --jev)
+  "minicpm-ocr-jev":
+    cmd: |
+      /home/utente/ai/llama.cpp-jev/build-hip/bin/llama-server
+      --port ${PORT}
+      -m /home/utente/ai/modelli/openbmb__MiniCPM-OCR-Jev-gguf/MiniCPM-OCR-Jev-Q8_0.gguf
+      --mmproj /home/utente/ai/modelli/openbmb__MiniCPM-OCR-Jev-gguf/mmproj-model-f16.gguf
+      -ngl 99 -c 40960
+    ttl: 600
+
+  # --- servizi di doc2md -------------------------------------------------------------------
+
+  # servizio doc2md (divisore PP-DocLayoutV3, PyMuPDF, schemi, LibreOffice): ~2 s per partire
+  "doc2md":
+    cmd: >
+      /home/utente/ai/tools/doc2md/.venv/bin/python -m uvicorn doc2md_api:app
+      --app-dir /home/utente/ai/tools/doc2md --host 127.0.0.1 --port ${PORT}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    ttl: 300
+    unlisted: true
+
+  # servizio render+score di MiniCPM-OCR-Jev (repository OpenBMB/MiniCPM-OCR), solo con --jev.
+  # La prima accensione puo' superare i 120 s che llama-swap aspetta di default: in quel caso,
+  # in cima a config.yaml:  healthCheckTimeout: 300
+  "jev-servizio":
+    cmd: >
+      bash -c "cd /home/utente/ai/tools/MiniCPM-OCR/scripts/minicpm-ocr-jev &&
+      exec bash sdk/start_render_score.sh ${PORT} http://127.0.0.1:8080/upstream/minicpm-ocr-jev"
+    env:
+      - "JEV_BACKEND_CONFIG=sdk/backends/llamacpp.yaml"
+      - "PATH=/home/utente/ai/tools/venv-jev-render/bin:/usr/local/bin:/usr/bin:/bin"
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /healthz
+    ttl: 300
+    unlisted: true
+
+  # trascrizione di audio e video (whisper.cpp). doc2md manda WAV 16 kHz gia' pronti: niente
+  # --convert (che farebbe scrivere a whisper-server file temporanei su disco).
+  #   cd ~/ai/tools && git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp
+  #   cmake -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1150 && cmake --build build -j --config Release
+  #   bash models/download-ggml-model.sh large-v3-turbo-q8_0      # ~0,9 GB, buono in italiano
+  #   bash models/download-vad-model.sh silero-v5.1.2             # salta silenzi e musica
+  "whisper":
+    cmd: >
+      /home/utente/ai/tools/whisper.cpp/build/bin/whisper-server
+      --host 127.0.0.1 --port ${PORT}
+      -m /home/utente/ai/tools/whisper.cpp/models/ggml-large-v3-turbo-q8_0.bin
+      --inference-path /v1/audio/transcriptions
+      -l auto -t 8 -bs 5 -mc 64
+      --vad -vm /home/utente/ai/tools/whisper.cpp/models/ggml-silero-v5.1.2.bin
+      --vad-speech-pad-ms 200
+    # -mc 64: contesto corto: basta per il testo iniziale che manda doc2md (frase di base, coda
+    #   del blocco precedente, titolo) e riduce le frasi inventate; con -mc 0 il testo iniziale
+    #   verrebbe ignorato. -bs 5: ricerca a fascio. --vad-speech-pad-ms 200: non taglia le parole.
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /
+    ttl: 300
+
+# tutti nello stesso gruppo: restano caricati insieme ai modelli di chat, senza scambiarsi
+groups:
+  "ausiliari":
+    swap: false
+    exclusive: false
+    persistent: true
+    members:
+      - "paddleocr-vl"
+      - "minicpm-ocr"
+      - "minicpm-ocr-jev"
+      - "doc2md"
+      - "jev-servizio"
+      - "whisper"

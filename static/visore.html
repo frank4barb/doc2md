@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visore doc2md</title>
+<link rel="stylesheet" href="{{katex.min.css}}">
+<script src="{{marked.min.js}}"></script>
+<script src="{{katex.min.js}}"></script>
+<script src="{{mermaid.min.js}}"></script>
+<style>
+:root { --sf: #f6f7f9; --sf2: #ffffff; --bordo: #d9dde3; --testo: #1d2330; --tenue: #667085;
+        --accento: #2f6fde; --sel: #e3ecfd; --avviso: #fff4d6; --avviso-b: #e0b84a; --err: #c0392b; }
+@media (prefers-color-scheme: dark) {
+  :root { --sf: #16191f; --sf2: #1e222a; --bordo: #323844; --testo: #e3e6eb; --tenue: #98a2b3;
+          --accento: #6ea1ff; --sel: #263652; --avviso: #3a3220; --avviso-b: #a8862e; --err: #ff7b6b; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--sf); color: var(--testo);
+             font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#app { display: grid; grid-template-columns: var(--lato, 330px) 1fr; grid-template-rows: auto 1fr; height: 100vh; }
+header { grid-column: 1 / 3; display: flex; gap: 12px; align-items: center; padding: 8px 12px;
+         border-bottom: 1px solid var(--bordo); background: var(--sf2); }
+header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+header .info { color: var(--tenue); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
+button, select, input, textarea { font: inherit; color: inherit; background: var(--sf2); border: 1px solid var(--bordo);
+                                  border-radius: 6px; padding: 4px 8px; }
+button { cursor: pointer; } button:hover { border-color: var(--accento); }
+aside { border-right: 1px solid var(--bordo); display: flex; flex-direction: column; min-height: 0; background: var(--sf2); }
+.schede { display: flex; border-bottom: 1px solid var(--bordo); }
+.schede button { flex: 1; border: 0; border-radius: 0; padding: 8px; background: transparent; }
+.schede button.attiva { box-shadow: inset 0 -2px var(--accento); font-weight: 600; }
+.pannello { display: none; flex-direction: column; gap: 8px; padding: 8px; min-height: 0; flex: 1; }
+.pannello.attivo { display: flex; }
+#percorso { font-size: 12px; color: var(--tenue); word-break: break-all; }
+#voci { overflow: auto; flex: 1; margin: 0; padding: 0; list-style: none; }
+#voci li { padding: 3px 6px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; }
+#voci li:hover { background: var(--sel); }
+#voci li .dim { margin-left: auto; color: var(--tenue); font-size: 11px; }
+#sql { width: 100%; min-height: 110px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+#risultati { overflow: auto; flex: 1; border: 1px solid var(--bordo); border-radius: 6px; }
+#risultati table { border-collapse: collapse; width: 100%; font-size: 12px; }
+#risultati th, #risultati td { border-bottom: 1px solid var(--bordo); padding: 3px 6px; text-align: left; vertical-align: top; }
+#risultati th { position: sticky; top: 0; background: var(--sf2); }
+#risultati tr.cliccabile { cursor: pointer; } #risultati tr.cliccabile:hover, #risultati tr.sel { background: var(--sel); }
+.riga { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tenue { color: var(--tenue); font-size: 12px; }
+main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0; }
+#scheda { padding: 6px 12px; border-bottom: 1px solid var(--bordo); font-size: 12px; display: none; gap: 14px; flex-wrap: wrap; }
+#scheda.attiva { display: flex; }
+#scheda b { font-weight: 600; }
+#scheda details { flex-basis: 100%; }
+#scheda pre { white-space: pre-wrap; max-height: 160px; overflow: auto; margin: 4px 0; }
+.affiancati { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+.vista { overflow: auto; min-height: 0; padding: 12px; }
+.vista + .vista { border-left: 1px solid var(--bordo); }
+.barra { position: sticky; top: -12px; margin: -12px -12px 10px; padding: 6px 12px; background: var(--sf);
+         border-bottom: 1px solid var(--bordo); display: flex; gap: 8px; align-items: center; font-size: 12px; z-index: 2; }
+#sinistra img.pagina { display: block; width: calc(var(--zoom, 100) * 1%); margin: 0 auto 12px; background: white;
+                       box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+#md { max-width: 900px; }
+#md table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+#md th, #md td { border: 1px solid var(--bordo); padding: 4px 8px; vertical-align: top; }
+#md img { max-width: 100%; }
+#md pre:not(.mermaid) { background: var(--sf2); border: 1px solid var(--bordo); padding: 8px; overflow: auto; border-radius: 6px; }
+#md pre.mermaid { background: white; border-radius: 6px; padding: 8px; text-align: center; }
+#md .pagina-sep { margin: 18px 0 8px; padding-top: 4px; border-top: 1px dashed var(--bordo); color: var(--tenue); font-size: 11px; }
+#md .verifica { background: var(--avviso); border: 1px solid var(--avviso-b); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+#md .errore-mermaid { color: var(--err); font-size: 12px; }
+#meta { font-size: 12px; color: var(--tenue); margin-bottom: 10px; }
+#meta table td { padding: 0 8px 0 0; }
+#grezzo { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; display: none; }
+.vuoto { color: var(--tenue); padding: 30px; text-align: center; }
+#p-conversione label { display: inline-flex; gap: 4px; align-items: center; }
+#conv-percorso { width: 100%; font-size: 12px; }
+#conv-piano, #conv-situazione { font-size: 12px; }
+.barra-av { height: 8px; border-radius: 4px; background: var(--bordo); overflow: hidden; }
+.barra-av > div { height: 100%; width: 0; background: var(--accento); transition: width .4s; }
+#conv-log { flex: 1; min-height: 120px; overflow: auto; margin: 0; padding: 6px; border: 1px solid var(--bordo);
+            border-radius: 6px; font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+.lista-link { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lista-link td { padding: 6px 8px; border-bottom: 1px solid var(--bordo); vertical-align: top; word-break: break-all; }
+.lista-link tr.cliccabile { cursor: pointer; }
+.lista-link tr.sel { background: var(--sel, rgba(80,120,255,.12)); }
+#conv-ind { font-size: 12px; color: var(--accento); cursor: pointer; white-space: nowrap; }
+button.primario { background: var(--accento); color: white; border-color: var(--accento); }
+button:disabled { opacity: .45; cursor: default; }
+.errore { color: var(--err); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Visore doc2md</h1>
+    <span class="info" id="intestazione">originale a sinistra, Markdown a destra</span>
+    <span id="conv-ind" title="vai alla conversione"></span>
+    <button id="prec" title="documento precedente nei risultati (tasto k)">◀</button>
+    <button id="succ" title="documento successivo nei risultati (tasto j)">▶</button>
+  </header>
+
+  <aside>
+    <div class="schede">
+      <button data-p="cartelle" class="attiva">Cartelle</button>
+      <button data-p="query">Query SQLite</button>
+      <button data-p="conversione">Conversione</button>
+    </div>
+
+    <div class="pannello attivo" id="p-cartelle">
+      <div class="riga"><select id="radici"></select><button id="su" title="cartella superiore">↑</button></div>
+      <div id="percorso"></div>
+      <ul id="voci"></ul>
+      <div class="riga"><button id="converti-qui" title="converte tutti i documenti della cartella aperta (lotto.py cartella)">⚙ converti questa cartella</button>
+        <button id="converti-file" disabled title="converte (o riconverte) il documento aperto a sinistra">⚙ converti il file aperto</button></div>
+      <div class="tenue">Clic su un documento o su un .md: si apre la coppia. Clic su un .db: query sul lotto.</div>
+    </div>
+
+    <div class="pannello" id="p-query">
+      <div class="tenue">Lotto: <span id="dbnome">nessuno (scegli un .db nelle cartelle)</span></div>
+      <select id="preset"><option value="">— query pronte —</option></select>
+      <textarea id="sql" spellcheck="false" placeholder="SELECT chiave, ... FROM risultati ..."></textarea>
+      <div class="riga"><button id="esegui">Esegui (Ctrl+Invio)</button><span class="tenue" id="esito"></span></div>
+      <div id="risultati"></div>
+      <div class="riga"><button id="converti-db" title="apre la scheda Conversione con questo lotto">⚙ converti questo lotto</button></div>
+      <div class="tenue">Le righe con una colonna "chiave" si aprono con un clic. Tabelle: documenti, risultati, immagini, info.
+        Funzione in piu': parole(testo).</div>
+    </div>
+    <div class="pannello" id="p-conversione">
+      <div class="tenue">Da convertire: un documento, una cartella di documenti oppure un lotto (.db)</div>
+      <input id="conv-percorso" spellcheck="false" placeholder="percorso del file, della cartella o del .db">
+      <div class="riga"><button id="conv-usa-file" title="il documento aperto a sinistra">file aperto</button>
+        <button id="conv-usa-cartella" title="la cartella aperta nella scheda Cartelle">cartella aperta</button>
+        <button id="conv-usa-db" title="il lotto aperto nella scheda Query">lotto aperto</button></div>
+      <div id="conv-piano" class="tenue"></div>
+      <div id="conv-situazione"></div>
+      <div class="riga">
+        <label title="ritenta i documenti finiti in errore"><input type="checkbox" id="o-riprova"> ritenta errori</label>
+        <label title="riconverte anche quelli già fatti (lotti e cartelle; un file solo si riconverte sempre)"><input type="checkbox" id="o-rifai"> rifai tutti</label>
+        <label title="voto di Jev sulle regioni lette dai modelli (piu' lento)"><input type="checkbox" id="o-jev"> Jev</label>
+        <label title="legge con i modelli anche le pagine con testo (prove)"><input type="checkbox" id="o-ocr"> OCR</label>
+      </div>
+      <div class="riga">
+        <label>limite <input type="number" id="o-limite" min="1" style="width:80px" placeholder="tutti"></label>
+        <label>immagini <select id="o-immagini"><option>separate</option><option>embedded</option><option>none</option></select></label>
+        <label>lingua <input id="o-lingua" style="width:44px" placeholder="auto"></label>
+      </div>
+      <div class="riga">
+        <button id="conv-avvia" class="primario">▶ Avvia</button>
+        <button id="conv-ferma" title="finisce il documento in corso e si ferma">■ Ferma</button>
+        <button id="conv-subito" title="interrompe anche il documento in corso (si rifà al prossimo avvio)">✕ Ferma subito</button>
+      </div>
+      <div class="barra-av"><div id="conv-barra"></div></div>
+      <div id="conv-testo" class="tenue"></div>
+      <pre id="conv-log"></pre>
+      <div class="tenue">Ripartire riprende da dove si era fermata. Una conversione alla volta; si ferma in ordine anche chiudendo il visore.</div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="scheda"></div>
+    <div class="affiancati">
+      <section class="vista" id="sinistra"><div class="vuoto">Scegli un documento</div></section>
+      <section class="vista" id="destra">
+        <div class="barra">
+          <span id="titolo-md" class="tenue">Markdown</span>
+          <span style="margin-left:auto"></span>
+          <label><input type="checkbox" id="vedi-grezzo"> testo grezzo</label>
+        </div>
+        <div id="meta"></div>
+        <div id="md"><div class="vuoto">—</div></div>
+        <pre id="grezzo"></pre>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const q = o => Object.entries(o).filter(([, v]) => v != null).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+const stato = { radici: [], cartella: null, db: null, file: null, righe: [], colonne: [], indice: -1, zoom: 100 };
+
+async function api(url, opz) {
+  const r = await fetch(url, opz);
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
+  return r.json();
+}
+
+if (window.mermaid) mermaid.initialize({ startOnLoad: false, securityLevel: "strict",
+  theme: matchMedia("(prefers-color-scheme: dark)").matches ? "neutral" : "default" });
+
+// ------------------------------------------------------------------ Markdown
+function rendi(md) {
+  let meta = null;
+  const fm = md.match(/^---\n([\s\S]*?)\n---\n/);
+  if (fm) { meta = fm[1]; md = md.slice(fm[0].length); }
+  // segni visibili: punti da ricontrollare e separatori di pagina
+  md = md.replace(/<!--\s*verifica:\s*([\s\S]*?)-->/g, (m, t) => `<span class="verifica">⚠ ${esc(t.trim())}</span>`);
+  md = md.replace(/<!--\s*DOCID:\S+\s+p:(\d+)\s+metodo:(\S+)([^>]*?)-->/g,
+                  (m, p, met, resto) => `\n<div class="pagina-sep">pagina ${p} · ${esc(met)}${resto.trim() ? " · " + esc(resto.trim()) : ""}</div>\n`);
+  // formule protette dal parser Markdown (gli _ e le \ non devono diventare corsivi o escape)
+  const formule = [];
+  const parti = md.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  for (let i = 0; i < parti.length; i += 2) {
+    parti[i] = parti[i]
+      .replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => { formule.push([t, true]); return `@@FORMULA${formule.length - 1}@@`; })
+      .replace(/\\\[([\s\S]+?)\\\]/g, (m, t) => { formule.push([t, true]); return `@@FORMULA${formule.length - 1}@@`; })
+      .replace(/(^|[^\\$\d])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m, pre, t) => { formule.push([t, false]); return pre + `@@FORMULA${formule.length - 1}@@`; });
+  }
+  let html = marked.parse(parti.join(""), { gfm: true });
+  html = html.replace(/@@FORMULA(\d+)@@/g, (m, i) => {
+    const [t, blocco] = formule[+i];
+    try { return katex.renderToString(t, { displayMode: blocco, throwOnError: false }); }
+    catch (e) { return `<code>${esc(t)}</code>`; }
+  });
+  return { meta, html };
+}
+
+async function mostraMd(testo, titolo) {
+  $("#titolo-md").textContent = titolo || "Markdown";
+  $("#grezzo").textContent = testo;
+  const { meta, html } = rendi(testo);
+  $("#meta").innerHTML = meta ? "<table>" + meta.split("\n").map(r => {
+    const i = r.indexOf(":"); return i > 0 ? `<tr><td>${esc(r.slice(0, i))}</td><td>${esc(r.slice(i + 1))}</td></tr>` : "";
+  }).join("") + "</table>" : "";
+  const box = $("#md");
+  box.innerHTML = html;
+  const nodi = [];
+  box.querySelectorAll("code.language-mermaid").forEach(c => {
+    const pre = document.createElement("pre");
+    pre.className = "mermaid"; pre.textContent = c.textContent;
+    c.parentElement.replaceWith(pre); nodi.push(pre);
+  });
+  if (nodi.length && window.mermaid) {
+    for (const n of nodi) {
+      const codice = n.textContent;
+      try { await mermaid.run({ nodes: [n] }); }
+      catch (e) { n.outerHTML = `<div class="errore-mermaid">Mermaid non disegnabile: ${esc(e.message || e)}</div><pre>${esc(codice)}</pre>`; }
+    }
+  }
+}
+
+// ------------------------------------------------------------------ originale
+async function mostraSorgente(param, titolo) {
+  const s = $("#sinistra");
+  if (!param) { s.innerHTML = '<div class="vuoto">Documento originale non trovato</div>'; return; }
+  s.innerHTML = '<div class="vuoto">carico…</div>';
+  let info;
+  try { info = await api("/api/sorgente/info?" + q(param)); }
+  catch (e) { s.innerHTML = `<div class="vuoto errore">${esc(e.message)}</div>`; return; }
+  const raw = "/api/sorgente/raw?" + q(param);
+  let barra = `<div class="barra"><b>${esc(titolo || info.nome)}</b><span class="tenue">${esc(info.tipo)} · ${(info.byte / 1024).toFixed(0)} KB${info.pagine ? " · " + info.pagine + " p." : ""}</span>
+     <span style="margin-left:auto"></span><a href="${raw}" target="_blank">apri originale</a>`;
+  if (info.pagine) barra += ` <label>zoom <input type="range" min="40" max="200" value="${stato.zoom}" id="zoom"></label>`;
+  barra += "</div>";
+  let corpo = "";
+  if (info.pagine) {
+    for (let n = 1; n <= info.pagine; n++)
+      corpo += `<img class="pagina" loading="lazy" alt="pagina ${n}" src="/api/sorgente/pagina?${q({ ...param, n })}">`;
+  } else if (/^image\//.test(info.mime)) corpo = `<img class="pagina" src="${raw}">`;
+  else if (/^audio\//.test(info.mime)) corpo = `<audio controls style="width:100%" src="${raw}"></audio>`;
+  else if (/^video\//.test(info.mime)) corpo = `<video controls style="width:100%" src="${raw}"></video>`;
+  else corpo = `<div class="vuoto">Anteprima non disponibile per "${esc(info.tipo)}": usa "apri originale".</div>`;
+  s.innerHTML = barra + corpo;
+  s.style.setProperty("--zoom", stato.zoom);
+  const z = $("#zoom");
+  if (z) z.oninput = () => { stato.zoom = z.value; s.style.setProperty("--zoom", z.value); };
+}
+
+// ------------------------------------------------------------------ link (.links, .url)
+// Il visore non apre nulla in rete da solo: il link si apre solo con un clic (nuova scheda).
+const aLink = u => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`;
+function mostraLink(c) {
+  const lista = c.lista ? `<div class="tenue">dalla lista ${esc(c.lista.split("/").pop())}</div>` : "";
+  const s = $("#sinistra");
+  s.innerHTML = `<div class="barra"><b>🔗 documento letto da un link</b></div>
+    <div style="padding:14px;line-height:1.6">${aLink(c.link)}${lista}
+    <div class="tenue" style="margin-top:8px">Il contenuto è in rete: il link si apre in una nuova scheda del browser.
+    Il visore non lo carica da solo.</div></div>`;
+}
+function mostraLista(c) {
+  const segno = v => v.stato === "fatto" ? "✅" : v.stato === "errore" ? "❌" : "⏳";
+  const s = $("#sinistra");
+  const fatti = c.voci.filter(v => v.stato === "fatto").length, errori = c.voci.filter(v => v.stato === "errore").length;
+  s.innerHTML = `<div class="barra"><b>🔗 ${esc(c.lista.split("/").pop())}</b>
+      <span class="tenue">${c.voci.length} link · fatti ${fatti} · errori ${errori} · da fare ${c.voci.length - fatti - errori}</span></div>
+    <table class="lista-link"><tbody>` + c.voci.map((v, i) => `<tr data-i="${i}" class="${v.md ? "cliccabile" : ""}">
+      <td>${segno(v)}</td><td><b>${esc(v.nome)}</b>${v.contesto ? `<div class="tenue">${esc(v.contesto)}</div>` : ""}
+      <div>${aLink(v.url)}</div>${v.errore ? `<div class="errore">${esc(v.errore)}</div>` : ""}</td></tr>`).join("") +
+    `</tbody></table>` + (c.voci.length ? "" : '<div class="vuoto">nessun link: uno per riga, che inizia con http:// o https://</div>');
+  mostraMd("", "scegli un link a sinistra (✅ convertito, ⏳ da fare, ❌ errore)");
+  s.querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = async e => {
+    if (e.target.closest("a")) return;
+    const v = c.voci[+tr.dataset.i];
+    s.querySelectorAll("tr").forEach(t => t.classList.toggle("sel", t === tr));
+    if (!v.md) { mostraMd("", v.stato === "errore" ? "conversione in errore" : "non ancora convertito"); return; }
+    const m = await api("/api/md?" + q({ percorso: v.md }));
+    mostraMd(m.testo, v.md.split("/").pop());
+  });
+}
+
+// ------------------------------------------------------------------ cartelle
+async function apriCartella(p) {
+  try {
+    const d = await api("/api/elenco?" + q({ percorso: p }));
+    stato.cartella = d.percorso;
+    $("#percorso").textContent = d.percorso;
+    $("#su").disabled = !d.su; $("#su").onclick = () => d.su && apriCartella(d.su);
+    $("#voci").innerHTML = d.voci.map((v, i) => `<li data-i="${i}">${v.cartella ? "📁" : icona(v.nome)} <span>${esc(v.nome)}</span>
+        <span class="dim">${v.cartella ? "" : dimensione(v.byte)}</span></li>`).join("") || '<li class="tenue">vuota</li>';
+    $("#voci").querySelectorAll("li[data-i]").forEach(li => li.onclick = () => scegli(d.voci[+li.dataset.i]));
+  } catch (e) { $("#voci").innerHTML = `<li class="errore">${esc(e.message)}</li>`; }
+}
+const icona = n => /\.md$/i.test(n) ? "📝" : /\.(links|url|webloc|desktop)$/i.test(n) ? "🔗" : /\.(db|sqlite)$/i.test(n) ? "🗄️" : /\.pdf$/i.test(n) ? "📄"
+  : /\.(png|jpe?g|gif|webp|tiff?|bmp)$/i.test(n) ? "🖼️" : /\.(mp3|wav|m4a|ogg|flac|mp4|mkv|webm|mov)$/i.test(n) ? "🎞️" : "📎";
+const dimensione = b => b == null ? "" : b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB";
+
+async function scegli(v) {
+  if (v.cartella) return apriCartella(v.percorso);
+  if (/\.(db|sqlite)$/i.test(v.nome)) return apriDb(v.percorso);
+  const c = await api("/api/coppia?" + q({ percorso: v.percorso }));
+  $("#scheda").classList.remove("attiva");
+  $("#intestazione").textContent = c.lista || c.sorgente || c.link || c.md;
+  stato.file = c.lista || c.sorgente || null;
+  $("#converti-file").disabled = !stato.file;
+  if (c.lista) return mostraLista(c);
+  if (c.link) mostraLink(c); else mostraSorgente(c.sorgente ? { file: c.sorgente } : null);
+  if (c.md) {
+    const m = await api("/api/md?" + q({ percorso: c.md }));
+    mostraMd(m.testo, c.md.split("/").pop());
+  } else mostraMd("", "Markdown non trovato (non ancora convertito?)");
+}
+
+// ------------------------------------------------------------------ query
+function apriDb(p) {
+  stato.db = p;
+  $("#dbnome").textContent = p.split("/").pop();
+  $("#dbnome").title = p;
+  scheda("query");
+  if (!$("#sql").value.trim()) { $("#preset").selectedIndex = 1; $("#sql").value = $("#preset").value; }
+  esegui();
+}
+async function esegui() {
+  if (!stato.db) { $("#esito").textContent = "scegli prima un .db"; return; }
+  $("#esito").textContent = "…";
+  try {
+    const r = await api("/api/db/query", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ db: stato.db, sql: $("#sql").value }) });
+    stato.colonne = r.colonne; stato.righe = r.righe; stato.indice = -1;
+    const ic = r.colonne.indexOf("chiave");
+    $("#esito").textContent = `${r.righe.length} righe${r.troncato ? " (troncate)" : ""} · ${r.secondi} s`;
+    $("#risultati").innerHTML = "<table><thead><tr>" + r.colonne.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead><tbody>" +
+      r.righe.map((riga, i) => `<tr data-i="${i}" class="${ic >= 0 ? "cliccabile" : ""}">` + riga.map(v => `<td>${esc(v)}</td>`).join("") + "</tr>").join("") +
+      "</tbody></table>";
+    if (ic >= 0) $("#risultati").querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = () => apriRiga(+tr.dataset.i));
+  } catch (e) { $("#esito").innerHTML = `<span class="errore">${esc(e.message)}</span>`; }
+}
+async function apriRiga(i) {
+  const ic = stato.colonne.indexOf("chiave");
+  if (ic < 0 || i < 0 || i >= stato.righe.length) return;
+  stato.indice = i;
+  $("#risultati").querySelectorAll("tr").forEach(tr => tr.classList.toggle("sel", +tr.dataset.i === i));
+  $("#risultati").querySelector(`tr[data-i="${i}"]`)?.scrollIntoView({ block: "nearest" });
+  const chiave = String(stato.righe[i][ic]);
+  $("#intestazione").textContent = `${chiave}  (${i + 1}/${stato.righe.length})`;
+  let d;
+  try { d = await api("/api/db/documento?" + q({ db: stato.db, chiave })); } catch (e) { d = null; }
+  if (d && d.info.url) mostraLink({ link: d.info.url }); else mostraSorgente({ db: stato.db, chiave }, chiave);
+  try {
+    if (!d) d = await api("/api/db/documento?" + q({ db: stato.db, chiave }));
+    const f = d.info, pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+    $("#scheda").innerHTML = `<span><b>${esc(chiave)}</b> ${esc(f.tipo || "")} · ${f.pagine ?? "?"} p. · ${esc(f.stato)}</span>
+      <span>verifica <b>${pct(f.verifica)}</b></span><span>completezza <b>${pct(f.completezza)}</b></span>
+      ${f.errore ? `<span class="errore">${esc(f.errore)}</span>` : ""}
+      ${f.mancanti ? `<span>mancano (atteso): ${esc(f.mancanti)}</span>` : ""}
+      ${f.mancanti_pdf ? `<span>mancano (PDF): ${esc(f.mancanti_pdf)}</span>` : ""}
+      ${f.atteso ? `<details><summary>testo atteso</summary><pre>${esc(f.atteso)}</pre></details>` : ""}`;
+    $("#scheda").classList.add("attiva");
+    mostraMd(d.testo, "Markdown dal lotto");
+  } catch (e) { $("#scheda").classList.remove("attiva"); mostraMd("", e.message); }
+}
+
+// ------------------------------------------------------------------ conversione
+const conv = { attiva: false, timer: null, ultimoLog: "", modo: null };
+const intestazioni = { "Content-Type": "application/json", "X-Visore": "1" };
+const durata = s => s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min` : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+const situazione = x => !x ? "mai convertito" : x.errore ? `<span class="errore">${esc(x.errore)}</span>`
+  : x.file ? (x.stato === "fatto" ? `già convertito il ${esc(x.convertito)}: si riconverte e il Markdown viene riscritto`
+              : `ultima conversione in errore: ${esc(x.errore_doc || "")}`)
+  : `${x.documenti} documenti · fatti <b>${x.fatti}</b> · errori <b>${x.errori}</b> · da fare <b>${x.da_fare}</b>`;
+
+async function pianoConv() {
+  const p = $("#conv-percorso").value.trim();
+  conv.modo = null;
+  if (!p) { $("#conv-piano").textContent = ""; $("#conv-situazione").innerHTML = ""; return; }
+  try {
+    const d = await api("/api/conversione/piano?" + q({ percorso: p }));
+    conv.modo = d.modo;
+    $("#conv-piano").textContent = d.modo === "db" ? "lotto SQLite: i risultati tornano nello stesso file"
+      : d.modo === "file" ? `documento: Markdown in ${d.uscita} · lotto ${d.lotto}/lotto.db`
+      : d.modo === "lista" ? `lista di link: un Markdown per link in ${d.uscita}/ · lotto ${d.lotto}/lotto.db`
+      : d.lotto ? `cartella: Markdown in ${d.uscita} · lotto ${d.lotto}/lotto.db, immagini ${d.lotto}/img`
+      : `tutta la cartella input: Markdown in ${d.uscita}, un lotto per ogni cartella di primo livello`;
+    $("#o-rifai").disabled = d.modo === "file";
+    $("#o-riprova").disabled = $("#o-limite").disabled = d.modo === "file";
+    $("#conv-situazione").innerHTML = situazione(d.situazione);
+  } catch (e) { $("#conv-piano").innerHTML = `<span class="errore">${esc(e.message)}</span>`; $("#conv-situazione").innerHTML = ""; }
+}
+function usaConv(p) { if (p) { $("#conv-percorso").value = p; pianoConv(); } scheda("conversione"); }
+
+async function aggiornaConv() {
+  let d;
+  try { d = await api("/api/conversione"); } catch (e) { return; }
+  conv.attiva = d.attiva;
+  const av = d.avanzamento, esterni = (d.esterni || []).length;
+  $("#conv-avvia").disabled = d.attiva || (esterni > 0 && conv.modo !== "file");
+  $("#conv-ferma").disabled = $("#conv-subito").disabled = !(d.attiva || esterni);
+  ["#conv-percorso", "#conv-usa-file", "#conv-usa-cartella", "#conv-usa-db"].forEach(s => $(s).disabled = d.attiva);
+  let testo = "", ind = "";
+  if (d.attiva) {
+    const nome = d.sorgente.split("/").pop();
+    testo = `in corso su ${esc(nome)} da ${durata(d.secondi)}` + (av ? ` · ${av.fatti}/${av.totale} · ${esc(av.testo)}`
+      : d.modo === "file" ? " · conversione del documento…" : " · preparazione…");
+    if (d.stop) testo += d.stop > 1 ? " · <b>interruzione immediata chiesta</b>" : " · <b>si ferma dopo il documento in corso</b>";
+    ind = `● ${esc(nome)} ${av ? av.fatti + "/" + av.totale : "…"}`;
+    if ($("#conv-percorso").value.trim() !== d.sorgente) { $("#conv-percorso").value = d.sorgente; pianoConv(); }
+  } else if (esterni) {
+    testo = `lotto.py già in esecuzione fuori dal visore (pid ${d.esterni.map(e => e.pid).join(", ")}: ${esc(d.esterni[0].modo)} ${esc(d.esterni[0].percorso)}); "Ferma" lo ferma`;
+    ind = "● lotto.py in esecuzione";
+  } else if (d.codice != null) {
+    const esito = d.codice === 0 ? (d.stop ? "fermata: riparte da dove era" : "finita")
+      : d.codice === 130 || d.stop > 1 ? "interrotta subito: il documento in corso si rifà al prossimo avvio"
+      : d.codice === 2 ? '<span class="errore">servizio doc2md non raggiungibile (llama-swap acceso?)</span>'
+      : `<span class="errore">uscita con codice ${d.codice}: vedi il registro</span>`;
+    testo = `${esito} · ${durata(d.secondi)}`;
+    if ((d.modo === "file" || d.modo === "lista") && d.codice === 0) testo += ' · <a href="#" id="conv-apri">apri il confronto</a>';
+  }
+  $("#conv-testo").innerHTML = testo;
+  if ($("#conv-apri")) $("#conv-apri").onclick = e => { e.preventDefault(); scegli({ nome: d.sorgente.split("/").pop(), percorso: d.sorgente }); };
+  $("#conv-ind").innerHTML = ind;
+  $("#conv-barra").style.width = av && av.totale ? (100 * av.fatti / av.totale).toFixed(1) + "%"
+    : d.modo === "file" ? (d.attiva ? "50%" : d.codice === 0 ? "100%" : "0") : (d.attiva ? "0" : $("#conv-barra").style.width);
+  if (d.situazione && d.sorgente === $("#conv-percorso").value.trim()) $("#conv-situazione").innerHTML = situazione(d.situazione);
+  const log = (d.righe || []).join("\n");
+  if (log !== conv.ultimoLog) {
+    const box = $("#conv-log"), inFondo = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    box.textContent = log; conv.ultimoLog = log;
+    if (inFondo) box.scrollTop = box.scrollHeight;
+  }
+  clearTimeout(conv.timer);
+  conv.timer = setTimeout(aggiornaConv, d.attiva || esterni ? 2000 : 10000);
+}
+
+$("#conv-percorso").addEventListener("change", pianoConv);
+$("#conv-usa-cartella").onclick = () => usaConv(stato.cartella);
+$("#conv-usa-file").onclick = () => usaConv(stato.file);
+$("#converti-file").onclick = () => usaConv(stato.file);
+$("#conv-usa-db").onclick = () => usaConv(stato.db);
+$("#conv-ind").onclick = () => scheda("conversione");
+$("#converti-qui").onclick = () => usaConv(stato.cartella);
+$("#converti-db").onclick = () => usaConv(stato.db);
+$("#conv-avvia").onclick = async () => {
+  const opzioni = { riprova_errori: $("#o-riprova").checked, rifai: $("#o-rifai").checked && !$("#o-rifai").disabled,
+                    jev: $("#o-jev").checked, ocr: $("#o-ocr").checked, limite: $("#o-limite").value,
+                    immagini: $("#o-immagini").value, lingua: $("#o-lingua").value.trim() };
+  try {
+    $("#conv-testo").textContent = "avvio…"; $("#conv-log").textContent = ""; conv.ultimoLog = "";
+    await api("/api/conversione/avvia", { method: "POST", headers: intestazioni,
+                                         body: JSON.stringify({ percorso: $("#conv-percorso").value.trim(), opzioni }) });
+  } catch (e) { $("#conv-testo").innerHTML = `<span class="errore">${esc(e.message)}</span>`; return; }
+  aggiornaConv();
+};
+const ferma = subito => async () => {
+  try { await api("/api/conversione/ferma", { method: "POST", headers: intestazioni, body: JSON.stringify({ subito }) }); }
+  catch (e) { $("#conv-testo").innerHTML = `<span class="errore">${esc(e.message)}</span>`; }
+  aggiornaConv();
+};
+$("#conv-ferma").onclick = ferma(false);
+$("#conv-subito").onclick = ferma(true);
+
+// ------------------------------------------------------------------ avvio
+function scheda(nome) {
+  document.querySelectorAll(".schede button").forEach(b => b.classList.toggle("attiva", b.dataset.p === nome));
+  document.querySelectorAll(".pannello").forEach(p => p.classList.toggle("attivo", p.id === "p-" + nome));
+}
+document.querySelectorAll(".schede button").forEach(b => b.onclick = () => scheda(b.dataset.p));
+$("#esegui").onclick = esegui;
+$("#sql").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); esegui(); } });
+$("#preset").onchange = () => { if ($("#preset").value) { $("#sql").value = $("#preset").value; esegui(); } };
+$("#vedi-grezzo").onchange = e => { $("#grezzo").style.display = e.target.checked ? "block" : "none";
+                                     $("#md").style.display = e.target.checked ? "none" : "block"; };
+$("#prec").onclick = () => apriRiga(stato.indice - 1);
+$("#succ").onclick = () => apriRiga(stato.indice + 1);
+document.addEventListener("keydown", e => {
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key === "j") apriRiga(stato.indice + 1);
+  if (e.key === "k") apriRiga(stato.indice - 1);
+});
+
+(async () => {
+  try {
+    const d = await api("/api/radici");
+    stato.radici = d.radici;
+    $("#radici").innerHTML = d.radici.map((r, i) => `<option value="${i}">${esc(r.nome)}${r.esiste ? "" : " (manca)"}</option>`).join("");
+    $("#radici").onchange = () => apriCartella(stato.radici[+$("#radici").value].percorso);
+    if (d.predefiniti) { $("#o-immagini").value = d.predefiniti.immagini || "separate"; $("#o-lingua").value = d.predefiniti.lingua || ""; }
+    aggiornaConv();
+    $("#preset").innerHTML += d.preset.map(p => `<option value="${esc(p.sql)}">${esc(p.nome)}</option>`).join("");
+    const prima = d.radici.find(r => r.esiste);
+    if (prima) { $("#radici").value = d.radici.indexOf(prima); apriCartella(prima.percorso); }
+    if (!window.marked || !window.katex) $("#md").innerHTML = '<div class="vuoto errore">Librerie non caricate: python visore.py --scarica-librerie</div>';
+  } catch (e) { $("#voci").innerHTML = `<li class="errore">${esc(e.message)}</li>`; }
+})();
+</script>
+</body>
+</html>

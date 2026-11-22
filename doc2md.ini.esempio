@@ -1,0 +1,52 @@
+; doc2md.ini - configurazione di doc2md
+; Copia questo file come doc2md.ini nella cartella del codice e modifica quello che serve.
+; Le righe che cominciano con ; sono commenti. "~" e' la cartella home.
+; Una variabile d'ambiente (indicata tra parentesi) prevale sul valore scritto qui.
+
+[cartelle]
+; documenti da convertire e file SQLite dei lotti (DOC2MD_INPUT)
+input  = ~/ai/data/doc2md/inp
+; dove finiscono i Markdown: d2m.py, doc2md.py, lotto.py cartella (DOC2MD_OUTPUT)
+output = ~/ai/data/doc2md/out
+; il visore lascia esplorare queste due cartelle
+
+[servizi]
+; llama-swap: modelli (DOC2MD_LLM_URL) e servizio doc2md (DOC2MD_URL)
+llm_url    = http://127.0.0.1:8080/v1
+doc2md_url = http://127.0.0.1:8080/upstream/doc2md
+; servizio render+score di MiniCPM-OCR-Jev, usato solo con --jev (DOC2MD_JEV_URL)
+jev_url    = http://127.0.0.1:8080/upstream/jev-servizio
+; token del servizio doc2md, se impostato (DOC2MD_TOKEN)
+token      =
+
+[modelli]
+; divisore della pagina: cartella del modello ONNX (DOC2MD_LAYOUT_DIR)
+layout_dir = ~/ai/modelli/phungpx__PP-DocLayoutV3-ONNX
+; nomi delle voci di llama-swap per ciascun compito
+testo   = paddleocr-vl
+tabelle = minicpm-ocr
+formule = minicpm-ocr
+whisper = whisper
+
+[conversione]
+; immagini: separate (file/tabella a parte, una per contenuto), embedded (nel .md), none
+immagini        = separate
+; trascrizioni: it, en, ... (vuoto: riconosciuta da whisper)
+lingua          =
+; archivi dentro archivi: livelli massimi; MB estraibili da un archivio
+profondita      = 3
+max_estratto_mb = 2048
+; secondi massimi per documento (d2m.py, lotto.py, visore): 7200 = 2 ore, per i video lunghi
+timeout         = 7200
+
+[servizio]
+; doc2md_api.py: conversioni in parallelo e dimensione massima di un documento
+paralleli  = 1
+max_mb     = 100
+; Python di sistema con il modulo uno di LibreOffice (per unoserver)
+uno_python = /usr/bin/python3
+
+[visore]
+; visore.py: solo da questo computer (per un altro PC: tunnel SSH, vedi README)
+host  = 127.0.0.1
+porta = 8095

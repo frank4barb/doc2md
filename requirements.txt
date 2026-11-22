@@ -1,0 +1,31 @@
+# doc2md - librerie Python (nel venv del progetto):  pip install -r requirements.txt
+# Programmi e modelli esterni (llama.cpp, llama-swap, whisper.cpp, LibreOffice, ffmpeg, modelli):
+# vedi README.md, sezione "Installazione".
+
+# PDF, immagini, schemi
+pymupdf>=1.24            # AGPL-3.0: vedi "Licenze" nel README
+pillow
+numpy
+opencv-python-headless
+onnxruntime              # divisore della pagina PP-DocLayoutV3 (ONNX, su CPU)
+requests
+
+# servizio HTTP e visore
+fastapi
+uvicorn
+python-multipart
+
+# Office, posta, e-book, pagine web, video
+openpyxl
+python-pptx
+markitdown[docx,pptx]==0.1.9   # solo i lettori locali di Word, PowerPoint, epub, html (versione fissata)
+extract-msg                    # posta di Outlook (.msg) con gli allegati - GPL
+trafilatura>=2.0               # pagine web: estrazione dell'articolo
+yt-dlp[default]                # video da link: solo download dell'audio
+
+# facoltativi
+# py7zr                        # archivi .7z
+# pyflakes                     # controllo del codice
+
+# Nel Python di SISTEMA (quello con il modulo "uno" di LibreOffice), non nel venv:
+#   sudo apt install python3-uno && pip install --break-system-packages unoserver

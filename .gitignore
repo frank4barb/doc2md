@@ -1,0 +1,22 @@
+# configurazione locale (copiata da doc2md.ini.esempio)
+doc2md.ini
+
+# cartelle personali o di lavoro: tutte quelle che iniziano con "__" (__OLD, __pycache__, ...)
+# e con "." (.venv, .vscode, .idea, ...), a qualunque livello
+__*/
+.*/
+!.github/
+*.pyc
+
+# librerie del browser scaricate da visore.py --scarica-librerie
+static/vendor/
+
+# dati: documenti, lotti, risultati (stanno nella cartella dati di doc2md.ini, non qui)
+*.db
+*.db-wal
+*.db-shm
+*.csv
+*.log
+out/
+inp/
+contesto-*.md
