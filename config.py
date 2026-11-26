@@ -36,7 +36,9 @@ PREDEFINITI = {
     ("conversione", "timeout"): ("7200", "DOC2MD_TIMEOUT"),
     ("servizio", "paralleli"): ("1", "DOC2MD_PARALLELI"),
     ("servizio", "max_mb"): ("100", "DOC2MD_MAX_MB"),
+    ("servizio", "max_mb_media"): ("2048", "DOC2MD_MAX_MB_MEDIA"),
     ("servizio", "uno_python"): ("/usr/bin/python3", "DOC2MD_UNO_PYTHON"),
+    ("rete", "reti_private"): ("no", "DOC2MD_RETI_PRIVATE"),
     ("visore", "host"): ("127.0.0.1", "DOC2MD_VISORE_HOST"),
     ("visore", "porta"): ("8095", "DOC2MD_VISORE_PORTA"),
 }
@@ -64,6 +66,11 @@ def valore(sezione: str, chiave: str) -> str:
 
 def intero(sezione: str, chiave: str) -> int:
     return int(valore(sezione, chiave))
+
+
+def vero(sezione: str, chiave: str) -> bool:
+    """Valore si/no (anche si', yes, true, 1)."""
+    return valore(sezione, chiave).lower() in ("si", "sì", "yes", "true", "1", "on")
 
 
 def cartella(chiave: str) -> Path:

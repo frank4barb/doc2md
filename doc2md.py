@@ -267,6 +267,7 @@ class Opzioni:
     nome: str = "documento"
     lingua: str | None = None    # trascrizioni: "it", "en"... (predefinito: riconosciuta)
     contesto: str | None = None  # trascrizioni: nomi e termini da scrivere giusti ("Marco Vannini, Eckhart")
+    segmenti: bool = False       # trascrizioni: nel rapporto anche i segmenti di whisper (inizio, fine, testo)
 
 
 class Errore(Exception):
@@ -400,6 +401,7 @@ class Pezzo:
     x: float
     md: str
     ordine: int | None = None
+    r: object = None            # riquadro sulla pagina, per l'ordine di lettura a colonne
 
 
 class Documento:
@@ -415,6 +417,7 @@ class Documento:
         self.tabelle = {True: 0, False: 0}   # tabelle grandi: controllo di struttura
         self.schemi = {"mermaid": 0, "ripiego": 0}
         self.avvisi = []
+        self.segmenti = []      # trascrizioni con opz.segmenti: [{"inizio", "fine", "testo", "verifica"}]
         self.testate_pdf = frozenset()   # intestazioni ripetute nelle pagine native
         self.profondita = 0              # archivi e allegati: livello di annidamento
         self.membri = []                 # archivi e posta: un elemento per file contenuto
@@ -566,6 +569,34 @@ def testate_ripetute(pdf) -> set:
     return {k for k, n in conta.items() if n >= soglia}
 
 
+def _dividi_blocchi(blocchi, vuoto=15):
+    """Un blocco del PDF puo' unire righe di colonne diverse (due firme affiancate):
+    si divide dove nessuna riga attraversa uno spazio vuoto verticale di almeno `vuoto` pt."""
+    out = []
+    for b in blocchi:
+        if b.get("type") != 0 or len(b.get("lines", [])) < 2:
+            out.append(b)
+            continue
+        gruppi = []                       # [x0, x1, righe]
+        for l in sorted(b["lines"], key=lambda l: l["bbox"][0]):
+            x0, x1 = l["bbox"][0], l["bbox"][2]
+            if gruppi and x0 - gruppi[-1][1] < vuoto:
+                gruppi[-1][1] = max(gruppi[-1][1], x1)
+                gruppi[-1][2].append(l)
+            else:
+                gruppi.append([x0, x1, [l]])
+        if len(gruppi) == 1:
+            out.append(b)
+            continue
+        for _, _, righe in gruppi:
+            righe.sort(key=lambda l: (l["bbox"][1], l["bbox"][0]))
+            r = pymupdf.Rect(righe[0]["bbox"])
+            for l in righe[1:]:
+                r |= l["bbox"]
+            out.append({**b, "bbox": tuple(r), "lines": righe})
+    return out
+
+
 def blocchi_testo(page, escludi, togli=frozenset()):
     """Testo nativo -> pezzi Markdown (titoli dalla dimensione del carattere).
     togli: testi normalizzati di intestazioni/piè di pagina da saltare nei margini."""
@@ -577,7 +608,7 @@ def blocchi_testo(page, escludi, togli=frozenset()):
                 sizes += [round(s["size"], 1)] * len(s["text"].strip())
     corpo = statistics.median(sizes) if sizes else 10
     out = []
-    for b in d["blocks"]:
+    for b in _dividi_blocchi(d["blocks"]):
         if b.get("type") != 0:
             continue
         r = pymupdf.Rect(b["bbox"])
@@ -589,16 +620,19 @@ def blocchi_testo(page, escludi, togli=frozenset()):
             t = "".join(s["text"] for s in l["spans"]).strip()
             if not t:
                 continue
-            y = (l["bbox"][1] + l["bbox"][3]) / 2
-            if righe and abs(righe[-1][0] - y) < 2.5:
-                righe[-1][1] += " " + t
+            y0, y1 = l["bbox"][1], l["bbox"][3]
+            # stessa riga visiva: altezze sovrapposte per piu' di meta' (font diversi
+            # sulla stessa riga hanno basi e altezze un po' diverse)
+            if righe and min(righe[-1][0][1], y1) - max(righe[-1][0][0], y0) > 0.5 * min(righe[-1][0][1] - righe[-1][0][0], y1 - y0):
+                righe[-1][1].append((l["bbox"][0], t))
             else:
-                righe.append([y, t])
+                righe.append([(y0, y1), [(l["bbox"][0], t)]])
             for s in l["spans"]:
                 if s["text"].strip():
                     dim = max(dim, s["size"])
                     gras &= bool(s["flags"] & 16) or "Bold" in s["font"]
-        righe = [PUNTINI.sub(" … ", t).strip() for _, t in righe]
+        # pezzi della stessa riga visiva da sinistra a destra
+        righe = [PUNTINI.sub(" … ", " ".join(t for _, t in sorted(seg))).strip() for _, seg in righe]
         if not righe:
             continue
         if togli and in_margine(r, page) and norma_testata(" ".join(righe)) in togli:
@@ -620,7 +654,7 @@ def blocchi_testo(page, escludi, togli=frozenset()):
             md = "### " + testo
         else:
             md = testo
-        out.append(Pezzo(r.y0, r.x0, md))
+        out.append(Pezzo(r.y0, r.x0, md, r=r))
     return out
 
 
@@ -669,7 +703,7 @@ def schema_vettoriale(doc: Documento, page, num, tabelle):
     # ordinamento della pagina lavorano su quelle non ruotate
     if page.rotation:
         area = (area * page.derotation_matrix).normalize()
-    return Pezzo(area.y0, area.x0, md), area
+    return Pezzo(area.y0, area.x0, md, r=area), area
 
 
 def immagini_nativa(doc: Documento, page, num, escludi):
@@ -697,7 +731,7 @@ def immagini_nativa(doc: Documento, page, num, escludi):
                     png = None
             if png is None:                      # ritagliata, ruotata o in formato strano
                 png = render(page, doc.cfg.dpi_figure, vis)
-            out.append(Pezzo(vis.y0, vis.x0, doc.schema_da_immagine(png, num)))
+            out.append(Pezzo(vis.y0, vis.x0, doc.schema_da_immagine(png, num), r=vis))
     return out, aree
 
 
@@ -733,7 +767,7 @@ def formule_native(doc: Documento, page, num, tabelle=()):
             continue
         reg = {"categoria": "formula", "testo": t, "ritaglio": crop}
         regioni.append(reg)
-        out.append((Pezzo(r.y0, r.x0, ""), reg))
+        out.append((Pezzo(r.y0, r.x0, "", r=r), reg))
         aree.append(r)
     if doc.opz.jev:
         doc.vota(regioni, png)
@@ -801,7 +835,7 @@ def pagina_nativa(doc: Documento, page, num):
             if md and t.row_count >= 2 and tabella_vera(t, page, lv):
                 r = pymupdf.Rect(t.bbox)
                 tabelle.append(r)
-                pezzi.append(Pezzo(r.y0, r.x0, md))
+                pezzi.append(Pezzo(r.y0, r.x0, md, r=r))
     except Exception as e:
         doc.avvisi.append(f"p{num}: tabelle non lette ({e})")
     escludi = list(tabelle)
@@ -826,9 +860,179 @@ def pagina_nativa(doc: Documento, page, num):
         except Exception as e:
             doc.avvisi.append(f"p{num}: formule lasciate come testo ({e})")
     togli = doc.testate_pdf if (num > 1 and not doc.opz.testate) else frozenset()
+    for pz, area in riquadri_campi(page, escludi):
+        pezzi.append(pz)
+        escludi.append(area)
     pezzi += blocchi_testo(page, escludi, togli)
-    pezzi.sort(key=lambda p: (round(p.y / 6), p.x))
+    pezzi = _unisci_righe(ordine_lettura(pezzi))
     return "\n\n".join(p.md for p in pezzi), metodo, voti
+
+
+def riquadri_campi(page, escludi):
+    """Riquadri disegnati che contengono campi di un report (etichette e valori in righe,
+    ciascuno nel suo rettangolo di ritaglio: i-net Clear Reports, Crystal Reports e simili)
+    -> tabella Markdown senza intestazione, una riga del riquadro per riga di tabella."""
+    try:
+        dis = page.get_drawings(extended=True)
+    except Exception:
+        return []
+    clip = [pymupdf.Rect(x["scissor"]) for x in dis if x.get("type") == "clip"]
+    cornici = [pymupdf.Rect(x["rect"]) for x in dis if x.get("type") == "s"
+               and x["rect"].width > 0.3 * page.rect.width and x["rect"].height > 20]
+    if not clip or not cornici:
+        return []
+    righe_testo = []
+    for b in page.get_text("dict")["blocks"]:
+        for l in b.get("lines", []):
+            t = "".join(s["text"] for s in l["spans"]).strip()
+            if t:
+                righe_testo.append((pymupdf.Rect(l["bbox"]), t))
+    out = []
+    for c in cornici:
+        if any(abs(c & e) > 0.3 * abs(c) for e in escludi if abs(c)):
+            continue
+        dentro = [(r, t) for r, t in righe_testo if c.contains(r + (1, 1, -1, -1))]
+        if len(dentro) < 4 or len(dentro) > 80:
+            continue
+        # ogni riga di testo nel suo campo (rettangolo di ritaglio piu' piccolo che la contiene)
+        campi = []
+        for r, t in dentro:
+            cc = [k for k in clip if k.contains(pymupdf.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)) and abs(k) < 0.5 * abs(c)]
+            if not cc:
+                break
+            k = min(cc, key=abs)
+            campi.append((k, r, t))
+        else:
+            if len({(round(k.x0), round(k.y0)) for k, _, _ in campi}) < 0.8 * len(campi):
+                continue          # i campi non sono rettangoli separati: testo normale
+            # righe: campi che si sovrappongono in altezza per piu' di meta'
+            campi.sort(key=lambda z: (z[0].y0, z[0].x0))
+            righe = []
+            for k, r, t in campi:
+                for rg in righe:
+                    a = rg[0][0]
+                    if min(a.y1, k.y1) - max(a.y0, k.y0) > 0.5 * min(a.height, k.height):
+                        rg.append((k, r, t))
+                        break
+                else:
+                    righe.append([(k, r, t)])
+            if len(righe) < 2:
+                continue
+            # colonne: zone orizzontali coperte dal testo, separate da almeno 8 pt di vuoto
+            # (etichetta e valore vicini finiscono nella stessa cella)
+            col = []                      # [x0, x1]
+            for x0, x1 in sorted((r.x0, r.x1) for _, r, _ in campi):
+                if col and x0 - col[-1][1] < 8:
+                    col[-1][1] = max(col[-1][1], x1)
+                else:
+                    col.append([x0, x1])
+            tab = []
+            for rg in sorted(righe, key=lambda g: min(z[0].y0 for z in g)):
+                celle = [""] * len(col)
+                for k, r, t in sorted(rg, key=lambda z: z[1].x0):
+                    i = max(range(len(col)), key=lambda j: min(col[j][1], r.x1) - max(col[j][0], r.x0))
+                    celle[i] = (celle[i] + " " + t).strip()
+                tab.append(celle)
+            # colonna di sole etichette ("Regime :"): si unisce al valore che segue
+            for j in range(len(col) - 2, -1, -1):
+                pieni = [r[j] for r in tab if r[j]]
+                if pieni and all(x.rstrip().endswith(":") for x in pieni):
+                    for r in tab:
+                        r[j + 1] = (r[j] + " " + r[j + 1]).strip()
+                        r[j] = ""
+            usate = [j for j in range(len(col)) if any(r[j] for r in tab)]
+            tab = [[r[j].replace("|", "\\|") for j in usate] for r in tab]
+            md = "| " + " | ".join([" "] * len(usate)) + " |\n|" + "---|" * len(usate) + "\n"
+            md += "\n".join("| " + " | ".join(r) + " |" for r in tab)
+            out.append((Pezzo(c.y0, c.x0, md, r=c), c))
+    return out
+
+
+def _semplice(p):
+    return p.r is not None and p.r.height < 20 and p.md and "\n" not in p.md and not p.md.startswith(("#", "!", "|", "$", "`", "<"))
+
+
+def _unisci_righe(pezzi):
+    """Pezzi di testo semplice consecutivi sulla stessa riga visiva ("Radiofarmaco:" e il
+    suo valore) -> una riga sola, da sinistra a destra."""
+    out = []
+    for p in pezzi:
+        q = out[-1] if out else None
+        if q is not None and _semplice(p) and _semplice(q) and p.r.x0 >= q.r.x1 - 1:
+            sov = min(p.r.y1, q.r.y1) - max(p.r.y0, q.r.y0)
+            if sov > 0.5 * min(p.r.height, q.r.height):
+                out[-1] = Pezzo(q.y, q.x, q.md + " " + p.md, r=q.r | p.r)
+                continue
+        out.append(p)
+    return out
+
+
+def _riq(p):
+    return p.r if p.r is not None else pymupdf.Rect(p.x, p.y, p.x + 1, p.y + 1)
+
+
+def _fasce(pezzi, asse, minimo):
+    """Divide i pezzi dove c'e' uno spazio vuoto lungo l'asse (0 = in verticale -> righe,
+    1 = in orizzontale -> colonne). minimo: larghezza minima dello spazio vuoto."""
+    lim = sorted(((_riq(p).y0, _riq(p).y1) if asse == 0 else (_riq(p).x0, _riq(p).x1), i)
+                 for i, p in enumerate(pezzi))
+    gruppi, cur, fine = [], [], None
+    for (a, b), i in lim:
+        if cur and a - fine >= minimo:
+            gruppi.append(cur)
+            cur, fine = [], None
+        cur.append(pezzi[i])
+        fine = b if fine is None else max(fine, b)
+    gruppi.append(cur)
+    return gruppi
+
+
+def _allineati(sx, dx):
+    """Quota dei pezzi di destra che stanno alla stessa altezza di un pezzo di sinistra
+    (modulo o tabella: si legge per righe; colonne di testo: si legge per colonne)."""
+    if not dx:
+        return 1.0
+    n = 0
+    for p in dx:
+        a = _riq(p)
+        for q in sx:
+            b = _riq(q)
+            sov = min(a.y1, b.y1) - max(a.y0, b.y0)
+            if sov > 0.5 * min(a.height or 1, b.height or 1):
+                n += 1
+                break
+    return n / len(dx)
+
+
+def ordine_lettura(pezzi, prof=0):
+    """Ordine di lettura XY-cut: si taglia la zona dove c'e' uno spazio vuoto che la
+    attraversa tutta. Le colonne di testo (pezzi non allineati in altezza) si leggono una
+    dopo l'altra; righe e moduli dall'alto in basso e da sinistra a destra."""
+    if len(pezzi) <= 1 or prof > 30:
+        return list(pezzi)
+    colonne = _fasce(pezzi, 1, 8)
+    if len(colonne) > 1:
+        righe = _fasce(pezzi, 0, 0.5)
+        sx = colonne[0]
+        resto = [p for c in colonne[1:] for p in c]
+        if len(righe) == 1 or (len(sx) >= 2 and len(resto) >= 2 and _allineati(sx, resto) < 0.5):
+            return [q for c in colonne for q in ordine_lettura(c, prof + 1)]
+    righe = _fasce(pezzi, 0, 0.5)
+    if len(righe) > 1:
+        return [q for r in righe for q in ordine_lettura(r, prof + 1)]
+    # nessun taglio possibile: righe per sovrapposizione in altezza, poi da sinistra a destra
+    righe = []
+    for p in sorted(pezzi, key=lambda p: _riq(p).y0):
+        a = _riq(p)
+        if righe:
+            b = righe[-1][0]
+            if min(a.y1, b.y1) - max(a.y0, b.y0) > 0.5 * min(a.height or 1, b.height or 1):
+                righe[-1][1].append(p)
+                if a.height < b.height:       # si confronta con il pezzo piu' basso della riga
+                    righe[-1][0] = a
+                continue
+        righe.append([a, [p]])
+    return [p for _, g in righe for p in sorted(g, key=lambda p: _riq(p).x0)]
 
 
 # ---------------------------------------------------------------- scansione
@@ -1235,6 +1439,7 @@ def componi(doc: Documento, nome: str, formato: str, secondi: float):
                 "metodo": metodi, "schemi": doc.schemi, "immagini": len(doc.immagini),
                 "secondi": round(secondi, 1), "avvisi": doc.avvisi, **doc.meta,
                 **({"membri": doc.membri} if doc.membri else {}),
+                **({"segmenti": doc.segmenti} if doc.segmenti else {}),
                 "pagine_dettaglio": [{k: v for k, v in i.items() if k != "voti"} |
                                      ({"jev": round(statistics.mean(i["voti"]), 3)} if i.get("voti") else {})
                                      for i in doc.info_pagine]}
@@ -1328,6 +1533,8 @@ def main():
     ap.add_argument("--lingua", default=config.valore("conversione", "lingua") or None,
                     help="trascrizioni: it, en... (predefinito: doc2md.ini, altrimenti riconosciuta)")
     ap.add_argument("--contesto", help="trascrizioni: nomi e termini da scrivere giusti")
+    ap.add_argument("--segmenti", action="store_true",
+                    help="trascrizioni: scrive accanto al .md un .segmenti.json con inizio, fine e testo")
     ap.add_argument("--stato", action="store_true", help="controlla i servizi ed esce (con --jev accende anche Jev e aspetta)")
     a = ap.parse_args()
     if a.stato or not a.file:
@@ -1339,7 +1546,7 @@ def main():
     if not link and not src.is_file():
         raise SystemExit(f"File non trovato: {a.file} (ne' qui ne' in {config.cartella('input')})")
     opz = Opzioni(immagini=a.immagini, jev=a.jev, doc_id=a.doc_id, testate=a.testate, ocr=a.ocr,
-                  nome=a.file if link else src.name, lingua=a.lingua, contesto=a.contesto)
+                  nome=a.file if link else src.name, lingua=a.lingua, contesto=a.contesto, segmenti=a.segmenti)
     # un file della cartella input (senza -o): nel suo lotto, come lotto.py file (vedi lotto.lotto_di)
     nel_lotto = not link and not a.out and not a.doc_id and \
         src.resolve().is_relative_to(config.cartella("input").expanduser().resolve())
@@ -1361,6 +1568,9 @@ def main():
     out = Path(a.out) if a.out else OUTPUT / f"{src.name}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(md, encoding="utf-8")
+    if rap.get("segmenti"):
+        out.with_suffix(".segmenti.json").write_text(json.dumps(rap["segmenti"], ensure_ascii=False, indent=0),
+                                                     encoding="utf-8")
     for im in rap.pop("_immagini", []):
         f = out.parent / "img" / im["file"]
         f.parent.mkdir(exist_ok=True)

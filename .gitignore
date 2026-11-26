@@ -20,3 +20,6 @@ static/vendor/
 out/
 inp/
 contesto-*.md
+
+# copie di sicurezza locali (file.bak-AAAAMMGG)
+*.bak-*

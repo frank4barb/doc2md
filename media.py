@@ -265,6 +265,10 @@ def trascrivi(doc, data: bytes, tipo: str, capitoli=None, contesto: str | None =
     if not tutti:
         doc.avvisi.append("nessun parlato riconosciuto")
     doc.meta["whisper_da_verificare"] = sum(dubbio(x) is not None for x in tutti)
+    if getattr(doc.opz, "segmenti", False):
+        doc.segmenti = [{"inizio": round(a, 2), "fine": round(b, 2), "testo": t.strip(),
+                         **({"verifica": m} if (m := dubbio((a, b, t, lp))) else {})}
+                        for a, b, t, lp in tutti]
 
 
 # ---------------------------------------------------------------- video da un link

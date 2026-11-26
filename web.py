@@ -4,13 +4,21 @@ Si legge soltanto (GET, niente cookie, niente dati del chiamante): il contenuto 
 Pagine web: trafilatura estrae l'articolo (titolo, testo, tabelle, link) senza menu, pubblicita'
 e pie' di pagina; se l'estrazione e' scarsa si converte la pagina intera. Un link a un PDF, a un
 Word, a un'immagine... scarica il file in memoria e lo passa a doc2md come un documento normale.
+
+Solo indirizzi pubblici: un link (e ogni suo redirect) che porta a localhost, a una rete privata o a
+indirizzi riservati viene rifiutato, cosi' il servizio non diventa una porta verso la rete interna.
+Per consentirli: doc2md.ini [rete] reti_private = si.
 """
 import base64
 import hashlib
+import ipaddress
 import re
+import socket
 from urllib.parse import unquote, urljoin, urlparse
 
 import requests
+
+import config
 
 D = None    # il modulo doc2md, collegato da doc2md all'avvio
 
@@ -25,10 +33,44 @@ def doc_id_url(url: str) -> str:
     return d if len(d) <= 255 else "URL-" + hashlib.sha256(url.encode()).hexdigest()[:16].upper()
 
 
-def scarica(url: str):
+MAX_REDIRECT = 10
+
+
+def controlla_link(url: str):
+    """Errore se il link non e' http(s) o se il nome porta a un indirizzo non pubblico
+    (loopback, rete privata, link-local, riservato, multicast...), salvo [rete] reti_private = si."""
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise D.Errore("il link deve cominciare con http:// o https:// e avere un nome di host")
+    if config.vero("rete", "reti_private"):
+        return
     try:
-        r = requests.get(url, headers={"User-Agent": AGENTE, "Accept-Language": "it,en;q=0.8"},
-                         timeout=(15, 120), stream=True, allow_redirects=True)
+        indirizzi = {a[4][0] for a in socket.getaddrinfo(u.hostname, u.port or (443 if u.scheme == "https" else 80),
+                                                        proto=socket.IPPROTO_TCP)}
+    except (socket.gaierror, UnicodeError) as e:
+        raise D.Errore(f"link: nome non risolto ({e})")
+    for a in indirizzi:
+        ip = ipaddress.ip_address(a.split("%")[0])
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:
+            raise D.Errore(f"link verso un indirizzo non pubblico ({u.hostname}): non consentito "
+                           "(doc2md.ini [rete] reti_private)")
+
+
+def scarica(url: str):
+    """GET del link seguendo i redirect a mano, con controllo dell'indirizzo a ogni passo."""
+    try:
+        for _ in range(MAX_REDIRECT + 1):
+            controlla_link(url)
+            r = requests.get(url, headers={"User-Agent": AGENTE, "Accept-Language": "it,en;q=0.8"},
+                             timeout=(15, 120), stream=True, allow_redirects=False)
+            if not r.is_redirect:
+                break
+            url = urljoin(url, r.headers.get("Location", ""))
+            r.close()
+        else:
+            raise D.Errore(f"link: piu' di {MAX_REDIRECT} redirect")
     except requests.RequestException as e:
         raise D.Errore(f"link non raggiungibile: {e}")
     if r.status_code >= 400:
@@ -55,6 +97,7 @@ def posix_base(p: str) -> str:
 
 def leggi_url(doc, url: str) -> str:
     doc.meta["link"] = url
+    controlla_link(url)
     if D.media.e_video(url):
         D.media.da_link(doc, url)
         return "youtube" if re.search(r"(youtube\.com|youtu\.be)/", url, re.I) else "video"

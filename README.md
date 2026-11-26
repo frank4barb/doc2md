@@ -92,6 +92,16 @@ Per ogni pagina PDF:
 2. **Nativa:** blocchi di testo (con titoli ed elenchi, senza le intestazioni ripetute), tabelle
    vere, schemi vettoriali (riquadri **collegati** da frecce → Mermaid; riquadri senza collegamenti
    restano testo), formule (MiniCPM-OCR sulle sole aree di formula), immagini contenute.
+   **Ordine di lettura** (dalla geometria, senza modelli):
+   - la pagina si taglia dove uno spazio vuoto la attraversa tutta (XY-cut): le colonne di testo
+     vere si leggono una dopo l'altra; righe, moduli e firme affiancate dall'alto in basso e da
+     sinistra a destra;
+   - due pezzi stanno sulla stessa riga se si sovrappongono in altezza per più di metà (font di
+     dimensioni diverse hanno basi diverse); etichetta e valore separati tornano su una riga;
+   - un blocco del PDF che unisce colonne diverse (due firme affiancate) si divide;
+   - **riquadri di campi**: un riquadro disegnato che contiene campi separati, ciascuno nel suo
+     rettangolo di ritaglio (generatori di report come i-net Clear Reports, Crystal Reports), diventa
+     una tabella Markdown; etichetta e valore vicini stanno nella stessa cella.
 3. **Scansione:** PP-DocLayoutV3 (ONNX, su CPU) divide la pagina in regioni; ogni regione va al
    lettore adatto (testo → PaddleOCR-VL, tabella e formula → MiniCPM-OCR); le figure passano da
    `schema_raster.py` (diagramma → Mermaid se la struttura è affidabile, altrimenti immagine).
@@ -172,6 +182,12 @@ Il visore esplora le stesse due cartelle. Ogni voce ha una variabile d'ambiente 
 esempio `DOC2MD_INPUT`, `DOC2MD_URL`) che **prevale** sul file: utile per prove o per impostazioni
 diverse in un singolo comando.
 
+**Link e rete interna.** Con `[rete] reti_private = no` (predefinito) un link si legge solo se il nome
+porta a indirizzi pubblici: localhost, reti private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local,
+indirizzi riservati e multicast sono rifiutati, e il controllo si ripete a ogni redirect. Così il servizio
+HTTP, se raggiungibile da altri, non diventa un modo per leggere i servizi interni. `reti_private = si`
+(o `DOC2MD_RETI_PRIVATE=si`) toglie il controllo, per esempio per convertire pagine della intranet.
+
 ## Uso
 
 ### Un documento o un link: `d2m.py`
@@ -207,7 +223,16 @@ curl http://127.0.0.1:8080/upstream/doc2md/v1/stato
 ```
 
 Campi: `file` oppure `url`, `immagini`, `jev`, `doc_id`, `testate`, `ocr`, `lingua`, `contesto`,
-`formato` (`md` oppure `json` con Markdown, rapporto e immagini separate in base64).
+`segmenti`, `formato` (`md` oppure `json` con Markdown, rapporto e immagini separate in base64).
+Con `segmenti=true` (audio e video, `formato=json`) il rapporto contiene `segmenti`: un elenco
+`{"inizio": s, "fine": s, "testo": ..., "verifica": motivo}` con i tempi di ogni segmento di whisper
+(`verifica` solo per i pezzi da riascoltare). Da riga di comando: `doc2md.py file.mp4 --segmenti`
+scrive anche `file.segmenti.json`.
+
+Dimensione massima del file: `[servizio] max_mb` (100) per i documenti, `max_mb_media` (2048) per audio e
+video, riconosciuti dal contenuto. Gli upload oltre 1 MB che il server appoggia in un file temporaneo
+vanno in `/dev/shm` (RAM), non sul disco. Di un video si usa solo l'audio: ffmpeg estrae subito la traccia
+in WAV 16 kHz mono (`media.py`, `in_pcm`) e a whisper vanno solo blocchi di audio.
 
 ## Lotti: database e alberi di cartelle
 
@@ -392,6 +417,11 @@ In [`prove/`](prove/):
   collegamenti trovati con il riferimento (verifica fatta una volta, poi solo programmi). Sulla
   raccolta usata per lo sviluppo: 377 collegamenti su 383 ritrovati.
 - `raccogli_casi.py`, `valida_schemi.py`: preparano la raccolta e la pagina di verifica a vista.
+- `ordine_lettura.py`: misura l'ordine di lettura delle pagine native su un lotto SQLite rispetto
+  a pdftotext (documento intero e prime 80 parole in impaginazione, cioè intestazione e riquadri);
+  con `--confronta doc2md.py.bak-...` confronta due versioni. Su 1000 referti del lotto reale
+  (26/11/2026): ordine da 0,951 a 0,973, intestazione da 0,942 a 0,994, documenti sotto 0,95 da
+  456 a 33, testo trovato e tempi invariati.
 - `prova_contesto.py`: misura l'effetto del testo iniziale sulle trascrizioni di whisper
   (punteggiatura, nomi, frasi inventate).
 
@@ -437,3 +467,32 @@ unoserver (MIT); nel browser marked, KaTeX e Mermaid (MIT).
 
 Il repository **non include** programmi né modelli esterni: ciascuno mantiene la propria licenza
 (vedi le relative pagine), da verificare prima di un uso commerciale.
+
+## Uso nel serverMCP (Mini PC)
+
+- Voce llama-swap **`doc2md`** (gruppo `ausiliari`): `.venv/bin/python -m uvicorn doc2md_api:app --app-dir ~/ai/tools/doc2md`,
+  `checkEndpoint: /health`, `ttl: 300`, `unlisted: true`. Configurazione in `doc2md.ini`.
+- Voce `doc2md` di `~/ai/serverMCP/tools.yaml` (`timeout_s: 7200`, seriale), profili agenti ed esterni.
+  Modulo `~/ai/serverMCP/tools/doc2md.py`: **`doc2md_converti(contenuto_base64+nome | percorso, immagini="none",
+  ocr, jev, testate, lingua, contesto, rapporto=false)`** → `doc_id`, `markdown`, `riepilogo` (o `rapporto` completo).
+  Il file va al servizio come contenuto multipart (formato sempre `json`), mai come percorso. Con
+  `immagini="separate"` le figure (max 20) tornano come contenuti immagine MCP. `url` solo per il profilo agenti:
+  il serverMCP rifiuta i nomi che risolvono a indirizzi non pubblici e doc2md ripete il controllo a ogni
+  redirect (`[rete] reti_private = no`). Prove del 25/11/2026: `https://example.com/` e redirect pubblico OK;
+  127.0.0.1, localhost, ::1, ::ffff:127.0.0.1, 10.x, 192.168.x, 169.254.169.254, `file://` rifiutati; redirect
+  verso 127.0.0.1 rifiutato (prova in-process con un server locale); `url` dal profilo esterni rifiutato.
+- Prova con i campioni di `~/ai/data/test`:
+
+      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@/home/frank/ai/data/test/testo-tabella.pdf
+      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@/home/frank/ai/data/test/jfk.wav -F lingua=en
+
+  Esito del 25/11/2026 (`testo-tabella.pdf`, a freddo): Markdown con titoli, elenchi e tabella 3×3 corretti, 2,1 s.
+  Via serverMCP (25/11/2026): `testo-tabella.pdf` 0,2 s; `formula.pdf` 18,1 s (nativa+formule); `testo-tabella.png`
+  10,8 s (OCR); `jfk.wav` 1,9 s (trascrizione corretta); PDF con una foto, `immagini=separate`, profilo esterni in
+  base64: 1,6 s, 1 immagine restituita. Audio mp3 (da `jfk.wav` con ffmpeg: mono 64 kbit/s, stereo 44,1 kHz VBR
+  con tag ID3, nome `.bin`): trascrizione corretta in tutti i casi.
+  Video lungo (mp4 di 43:37, 245 MB, prima rifiutato per il limite di 100 MB): con `max_mb_media = 2048`
+  via `d2m.py` 120,5 s e via serverMCP (percorso, invio in streaming) 118,3 s; picco di memoria del servizio
+  0,5 GB, del serverMCP 59 MB, `/dev/shm` 286 MB durante l'upload; whisper resta acceso per tutto il lavoro;
+  144 paragrafi, `whisper_da_verificare: 93` (segmenti di whisper con `avg_logprob` < -0,25 o più di 25
+  caratteri/s: parlato sovrapposto, musica ed effetti di un film).

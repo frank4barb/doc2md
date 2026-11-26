@@ -43,8 +43,15 @@ timeout         = 7200
 ; doc2md_api.py: conversioni in parallelo e dimensione massima di un documento
 paralleli  = 1
 max_mb     = 100
+; audio e video (riconosciuti dal contenuto): ffmpeg ne estrae subito la sola traccia audio
+max_mb_media = 2048
 ; Python di sistema con il modulo uno di LibreOffice (per unoserver)
 uno_python = /usr/bin/python3
+
+[rete]
+; link (--url, campo url dell'API): no = solo indirizzi pubblici, anche dopo i redirect
+; (rifiutati localhost, reti private, link-local, indirizzi riservati); si = nessun controllo
+reti_private = no
 
 [visore]
 ; visore.py: solo da questo computer (per un altro PC: tunnel SSH, vedi README)

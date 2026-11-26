@@ -18,6 +18,7 @@ Chiamate:
                            ocr=true  (legge con i modelli anche le pagine native)
                            lingua=it|en|...  (trascrizioni; predefinito: riconosciuta)
                            contesto=...      (trascrizioni: nomi e termini da scrivere giusti)
+                           segmenti=true     (trascrizioni: nel rapporto i segmenti con inizio e fine)
        risposta: il Markdown (text/markdown), oppure JSON {doc_id, markdown, rapporto}
        con formato=json. Il doc_id e' anche nell'intestazione X-Doc-Id.
 
@@ -25,11 +26,14 @@ Esempio:
   curl -F file=@fattura.pdf -F jev=true http://127.0.0.1:8090/v1/converti -o fattura.md
 
 Token facoltativo: se DOC2MD_TOKEN e' impostato serve "Authorization: Bearer <token>".
+Limiti: [servizio] max_mb (100) per i documenti, max_mb_media (2048) per audio e video.
 Le conversioni vanno una alla volta (DOC2MD_PARALLELI, predefinito 1): i modelli
 su llama-swap servono una richiesta alla volta e la coda e' piu' prevedibile.
 """
+import tempfile
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -39,6 +43,10 @@ import config
 import doc2md
 
 MAX_MB = config.intero("servizio", "max_mb")
+MAX_MB_MEDIA = config.intero("servizio", "max_mb_media")      # audio e video
+# Starlette appoggia gli upload oltre 1 MB in un file temporaneo: in RAM, non sul disco
+if Path("/dev/shm").is_dir():
+    tempfile.tempdir = "/dev/shm"
 TOKEN = config.valore("servizi", "token")
 _coda = threading.BoundedSemaphore(config.intero("servizio", "paralleli"))
 _cfg = doc2md.Config()
@@ -88,7 +96,8 @@ async def converti(file: UploadFile | None = File(None),
                    ocr: bool = Form(False),
                    formato: str = Form("md"),
                    lingua: str | None = Form(None),
-                   contesto: str | None = Form(None)):
+                   contesto: str | None = Form(None),
+                   segmenti: bool = Form(False)):
     if immagini not in ("embedded", "separate", "none"):
         raise HTTPException(422, "immagini deve essere embedded, separate oppure none")
     if immagini == "separate" and formato != "json":
@@ -100,15 +109,22 @@ async def converti(file: UploadFile | None = File(None),
     if url:
         data, nome = None, url
     else:
+        testa = await file.read(1 << 16)  # tipo dal contenuto: audio e video hanno un limite piu' alto
+        await file.seek(0)
+        media = doc2md.riconosci_tipo(testa, file.filename or "") in doc2md.AUDIO | doc2md.VIDEO
+        limite = MAX_MB_MEDIA if media else MAX_MB
+        if file.size and file.size > limite * 1024 * 1024:
+            raise HTTPException(413, f"file oltre {limite} MB" + ("" if media else " (audio e video: "
+                                                                    f"{MAX_MB_MEDIA} MB)"))
         data = await file.read()          # in memoria: nessuna copia su disco
         if not data:
             raise HTTPException(422, "file vuoto")
-        if len(data) > MAX_MB * 1024 * 1024:
-            raise HTTPException(413, f"file oltre {MAX_MB} MB")
+        if len(data) > limite * 1024 * 1024:
+            raise HTTPException(413, f"file oltre {limite} MB")
         nome = file.filename or "documento"
     opz = doc2md.Opzioni(immagini=immagini, jev=jev, doc_id=doc_id or None,
                          testate=testate, ocr=ocr, nome=nome, lingua=lingua or None,
-                         contesto=contesto or None)
+                         contesto=contesto or None, segmenti=segmenti)
     try:
         md, rap = await run_in_threadpool(_lavora, data, nome, opz)
     except doc2md.Errore as e:
