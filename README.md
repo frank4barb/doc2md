@@ -468,31 +468,28 @@ unoserver (MIT); nel browser marked, KaTeX e Mermaid (MIT).
 Il repository **non include** programmi né modelli esterni: ciascuno mantiene la propria licenza
 (vedi le relative pagine), da verificare prima di un uso commerciale.
 
-## Uso nel serverMCP (Mini PC)
+## Uso in un server MCP
 
-- Voce llama-swap **`doc2md`** (gruppo `ausiliari`): `.venv/bin/python -m uvicorn doc2md_api:app --app-dir ~/ai/tools/doc2md`,
-  `checkEndpoint: /health`, `ttl: 300`, `unlisted: true`. Configurazione in `doc2md.ini`.
-- Voce `doc2md` di `~/ai/serverMCP/tools.yaml` (`timeout_s: 7200`, seriale), profili agenti ed esterni.
-  Modulo `~/ai/serverMCP/tools/doc2md.py`: **`doc2md_converti(contenuto_base64+nome | percorso, immagini="none",
-  ocr, jev, testate, lingua, contesto, rapporto=false)`** → `doc_id`, `markdown`, `riepilogo` (o `rapporto` completo).
-  Il file va al servizio come contenuto multipart (formato sempre `json`), mai come percorso. Con
-  `immagini="separate"` le figure (max 20) tornano come contenuti immagine MCP. `url` solo per il profilo agenti:
-  il serverMCP rifiuta i nomi che risolvono a indirizzi non pubblici e doc2md ripete il controllo a ogni
-  redirect (`[rete] reti_private = no`). Prove del 25/11/2026: `https://example.com/` e redirect pubblico OK;
-  127.0.0.1, localhost, ::1, ::ffff:127.0.0.1, 10.x, 192.168.x, 169.254.169.254, `file://` rifiutati; redirect
-  verso 127.0.0.1 rifiutato (prova in-process con un server locale); `url` dal profilo esterni rifiutato.
-- Prova con i campioni di `~/ai/data/test`:
+doc2md si può offrire agli agenti come strumento di un server MCP, con il servizio HTTP dietro llama-swap.
 
-      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@/home/frank/ai/data/test/testo-tabella.pdf
-      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@/home/frank/ai/data/test/jfk.wav -F lingua=en
+- **Voce llama-swap** `doc2md` (servizio senza modello di chat: `proxy`, `checkEndpoint: /health`,
+  `ttl: 300`, `unlisted: true`), comando `.venv/bin/python -m uvicorn doc2md_api:app --app-dir <cartella di doc2md>`;
+  si raggiunge su `/upstream/doc2md/...` e si carica alla prima richiesta. Esempio in `llama-swap-doc2md.yaml`.
+- **Strumento MCP** consigliato: `doc2md_converti(contenuto_base64 + nome | percorso, immagini="none", ocr, jev,
+  testate, lingua, contesto, segmenti, rapporto=false)` → `doc_id`, `markdown`, `riepilogo` (o il rapporto
+  completo). Buone regole per il server MCP:
+  - il file va al servizio come contenuto (multipart), mai come percorso: così chiamare il servizio non permette
+    di leggere file fuori dalle cartelle consentite all'agente;
+  - con `immagini="separate"` le figure tornano come contenuti immagine MCP (meglio porre un massimo, per
+    esempio 20);
+  - `url` solo per gli utenti fidati: rifiutare i nomi che risolvono a indirizzi non pubblici (doc2md ripete il
+    controllo a ogni redirect con `[rete] reti_private = no`);
+  - audio e video grandi (fino a `max_mb_media`) conviene inviarli in streaming, letti dal disco.
+- **Prova** con un PDF e un audio qualsiasi:
 
-  Esito del 25/11/2026 (`testo-tabella.pdf`, a freddo): Markdown con titoli, elenchi e tabella 3×3 corretti, 2,1 s.
-  Via serverMCP (25/11/2026): `testo-tabella.pdf` 0,2 s; `formula.pdf` 18,1 s (nativa+formule); `testo-tabella.png`
-  10,8 s (OCR); `jfk.wav` 1,9 s (trascrizione corretta); PDF con una foto, `immagini=separate`, profilo esterni in
-  base64: 1,6 s, 1 immagine restituita. Audio mp3 (da `jfk.wav` con ffmpeg: mono 64 kbit/s, stereo 44,1 kHz VBR
-  con tag ID3, nome `.bin`): trascrizione corretta in tutti i casi.
-  Video lungo (mp4 di 43:37, 245 MB, prima rifiutato per il limite di 100 MB): con `max_mb_media = 2048`
-  via `d2m.py` 120,5 s e via serverMCP (percorso, invio in streaming) 118,3 s; picco di memoria del servizio
-  0,5 GB, del serverMCP 59 MB, `/dev/shm` 286 MB durante l'upload; whisper resta acceso per tutto il lavoro;
-  144 paragrafi, `whisper_da_verificare: 93` (segmenti di whisper con `avg_logprob` < -0,25 o più di 25
-  caratteri/s: parlato sovrapposto, musica ed effetti di un film).
+      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@prova.pdf
+      curl -s http://127.0.0.1:8080/upstream/doc2md/v1/converti -F file=@prova.wav -F lingua=en
+
+  Valori indicativi (PC con Ryzen AI 9 HX 370, servizio già caricato): PDF nativo di una pagina 0,2-0,4 s;
+  pagina con formule circa 18 s; immagine con OCR circa 11 s; audio breve circa 2 s; video di 44 minuti
+  (245 MB) circa 2 minuti, con 0,5 GB di memoria per il servizio.
